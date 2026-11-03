@@ -12,9 +12,8 @@
 
 import { h, provide, inject } from 'vue'
 import { isHTMLTag, hyphenate } from '@vue/shared'
-import babelPluginJSX from '@vue/babel-plugin-jsx'
-import { transformSync } from '@babel/core'
-import TinyVue, { Notify } from '@opentiny/vue'
+// web-erp: 移除 @vue/babel-plugin-jsx、@babel/core（浏览器端 JSX 降级本身损坏且拖重依赖）与 @opentiny/vue 静态导入
+// web-erp: TinyVue 改经 configure.tinyVue 注入、Notify 改 configure.onWarn/onError 钩子，避免把 TinyVue 全家桶拖进宿主应用
 import {
   CanvasRow,
   CanvasCol,
@@ -38,25 +37,8 @@ const customElements = {}
 const [JS_EXPRESSION, JS_FUNCTION] = ['JSExpression', 'JSFunction']
 const isOn = (key) => /^on[A-Z]\w*/.test(key)
 
-const transformJSX = (code) => {
-  const res = transformSync(code, {
-    plugins: [
-      [
-        babelPluginJSX,
-        {
-          pragma: 'h',
-          isCustomElement: (name) => customElements[name]
-        }
-      ]
-    ]
-  })
-  return (res.code || '')
-    .replace(/import \{.+\} from "vue";/, '')
-    .replace(/h\(_?resolveComponent\((.*?)\)/g, `h(this.getComponent($1)`)
-    .replace(/_?resolveComponent/g, 'h')
-    .replace(/_?createTextVNode\((.*?)\)/g, '$1')
-    .trim()
-}
+// web-erp: 删除 transformJSX（@babel/core transformSync 浏览器端 JSX 编译）——web-erp 方言 v1 拒绝 JSX，
+// 后端校验器在闸上拦截 JSX，渲染器这层只做「不支持 JSX」的纵深上报，不再做 babel 降级
 
 const Mapper = {
   Icon: CanvasIcon,
@@ -78,14 +60,68 @@ const Mapper = {
 
 export const collectionMethodsMap = {}
 
-const getNative = (name) => {
-  return TinyVue?.[name]
+// web-erp: 宿主物料注册表，getComponent 中优先级最高（高于内置 Mapper 与 tinyVue native 兜底）
+const materials = {}
+
+/**
+ * web-erp: 物料注册 API（幂等合并，同名物料后注册覆盖先注册）
+ * @param {Record<string, Component>} materialsMap componentName -> 组件 的映射表
+ */
+export const registerMaterials = (materialsMap) => {
+  Object.assign(materials, materialsMap)
 }
 
+/**
+ * web-erp: 宿主注入契约（经 setConfigure 幂等合并进 configure）：
+ * - tinyVue?: TinyVue 全量默认导出（如 `import TinyVue from '@opentiny/vue'`），
+ *   作为未注册物料的 native 兜底查找表；不注入则无 TinyVue 兜底（渲染器不再静态依赖 @opentiny/vue）
+ * - onError?: (error, context) => void 解析失败回调（表达式求值/函数声明解析）。
+ *   context: { expression 原文, message 错误信息, scopeKeys 求值 scope 的 key 列表, jsx 是否 JSX 形态 }；
+ *   未配置时 console.error 兜底，保证无静默失败
+ * - onWarn?: (error, context) => void 方法运行期报错回调（generateFn 同步抛错与 promise reject）；
+ *   未配置时 console.warn 兜底
+ * 注意：configure 同时承载上游画布容器配置（configure[componentName].isContainer 等），
+ * 宿主注入字段请勿与 componentName 命名冲突
+ */
 const configure = {}
 
 export const setConfigure = (configureData) => {
   Object.assign(configure, configureData)
+}
+
+const getNative = (name) => {
+  // web-erp: TinyVue 改经 configure.tinyVue 注入，未注入时返回 undefined（无 native 兜底）
+  return configure.tinyVue?.[name]
+}
+
+// web-erp: 轻量 JSX 形态探测，仅用于挑选错误文案；不是校验闸（后端校验器才是第一道）
+const looksLikeJSX = (value) =>
+  typeof value === 'string' && /<\s*\/?\s*[A-Za-z][\s\S]*?>|<>\s*[\s\S]*?<\//.test(value)
+
+// web-erp: 解析失败统一上报出口 —— onError 未配置时 console.error 兜底（无静默失败），调用方随后返回 undefined
+const reportParseError = (error, expression, scope) => {
+  const jsx = looksLikeJSX(expression)
+  const context = {
+    expression,
+    jsx,
+    scopeKeys: Object.keys(scope || {}),
+    message: jsx ? '不支持 JSX 表达式（web-erp 方言 v1 拒绝）' : error?.message || String(error)
+  }
+
+  if (isFunction(configure.onError)) {
+    configure.onError(error, context)
+  } else {
+    console.error('[tiny-schema-renderer] 解析失败:', context.message, context)
+  }
+}
+
+// web-erp: 方法运行期警告统一出口（原 Notify 改造），onWarn 未配置时 console.warn 兜底
+const reportWarn = (title, message) => {
+  if (isFunction(configure.onWarn)) {
+    configure.onWarn(new Error(message), { title, message })
+  } else {
+    console.warn(`[tiny-schema-renderer] ${title}: ${message}`)
+  }
 }
 
 const isJSSlot = (data) => {
@@ -130,19 +166,16 @@ export const newFn = (...argv) => {
   return new Fn(...argv)
 }
 
-const parseExpression = (data, scope, ctx, isJsx = false) => {
+const parseExpression = (data, scope, ctx) => {
   try {
-    const expression = isJsx ? transformJSX(data.value) : data.value
-    return newFn('$scope', `with($scope || {}) { return ${expression} }`).call(ctx, {
+    return newFn('$scope', `with($scope || {}) { return ${data.value} }`).call(ctx, {
       ...ctx,
       ...scope,
       slotScope: scope
     })
-  } catch (err) {
-    // 解析抛出异常，则再尝试解析 JSX 语法。如果解析 JSX 语法仍然出现错误，isJsx 变量会确保不会再次递归执行解析
-    if (!isJsx) {
-      return parseExpression(data, scope, ctx, true)
-    }
+  } catch (error) {
+    // web-erp: 删除 JSX/babel 降级重试 —— 求值单次执行，失败走 onError 上报（无静默失败）后返回 undefined
+    reportParseError(error, data?.value, scope)
     return undefined
   }
 }
@@ -159,7 +192,9 @@ function renderComponent(schema, scope, parent) {
 
   const component = getComponent(componentName)
 
-  const loopList = parseData(loop, scope)
+  // web-erp: loop/condition/props/children 解析补回 parent（pageContext）实参 —— 此前丢失导致渲染期
+  // JSExpression 拿不到 ctx、this.state/methods 全部失效（上游 main 为三参形态，对齐恢复）
+  const loopList = parseData(loop, scope, parent)
 
   const renderElement = (item, index) => {
     let mergeScope = item
@@ -171,11 +206,11 @@ function renderComponent(schema, scope, parent) {
         })
       : scope
 
-    if (!parseCondition(condition, mergeScope)) {
+    if (!parseCondition(condition, mergeScope, parent)) {
       return null
     }
 
-    const Ele = h(component, getBindProps(schema, mergeScope), getChildren(schema, mergeScope))
+    const Ele = h(component, getBindProps(schema, mergeScope, parent), getChildren(schema, mergeScope, parent))
 
     return Ele
   }
@@ -202,23 +237,17 @@ export const generateFn = (innerFn, context) => {
       try {
         result = innerFn.call(context, ...args)
       } catch (error) {
-        Notify({
-          type: 'warning',
-          title: `函数:${innerFn.name}执行报错`,
-          message: error?.message || `函数:${innerFn.name}执行报错，请检查语法`
-        })
+        // web-erp: 原 Notify 改走 configure.onWarn（拔掉 @opentiny/vue 静态依赖）
+        reportWarn(`函数:${innerFn.name}执行报错`, error?.message || `函数:${innerFn.name}执行报错，请检查语法`)
       }
 
       // 这里注意如果innerFn返回的是一个promise则需要捕获异常，重新返回默认一条空数据
       if (result?.then) {
         result = new Promise((resolve) => {
           result.then(resolve).catch((error) => {
-            Notify({
-              type: 'warning',
-              title: '异步函数执行报错',
-              message: error?.message || '异步函数执行报错，请检查语法'
-            })
-            // 这里需要至少返回一条空数据，方便用户使用表格默认插槽
+            // web-erp: 原 Notify 改走 configure.onWarn（拔掉 @opentiny/vue 静态依赖）
+            reportWarn('异步函数执行报错', error?.message || '异步函数执行报错，请检查语法')
+            // web-erp: 画布习惯保留 —— 至少返回一条空数据，方便用户使用表格默认插槽
             resolve({
               result: [{}],
               page: { total: 1 }
@@ -232,25 +261,11 @@ export const generateFn = (innerFn, context) => {
   }
 }
 
-// 解析函数字符串结构
-const parseFunctionString = (fnStr) => {
-  const fnRegexp = /(async)?.*?(\w+) *\(([\s\S]*?)\) *\{([\s\S]*)\}/
-  const result = fnRegexp.exec(fnStr)
-  if (result) {
-    return {
-      type: result[1] || '',
-      name: result[2],
-      params: result[3]
-        .split(',')
-        .map((item) => item.trim())
-        .filter((item) => Boolean(item)),
-      body: result[4]
-    }
-  }
-  return null
-}
+// web-erp: 删除 parseFunctionString 与 parseJSXFunction —— 仅服务于已移除的 babel JSX 降级链路，
+// JSFunction 值由 newFn 直接构造，失败统一走 reportParseError 上报（见 parseJSFunction）
 
-const getPlainProps = (object = {}) => {
+// web-erp: 导出以便单测钉住 on[A-Z] 事件 props 不被 hyphenate 的契约（与宿主物料事件约定的咬合面）
+export const getPlainProps = (object = {}) => {
   const { slot, ...rest } = object
   const props = {}
 
@@ -291,29 +306,8 @@ const generateCollection = (schema) => {
 }
 
 export const getComponent = (name) => {
-  return Mapper[name] || getNative(name) || customElements[name] || (isHTMLTag(name) ? name : null)
-}
-
-// 解析JSX字符串为可执行函数
-const parseJSXFunction = (data, ctx) => {
-  try {
-    const newValue = transformJSX(data.value)
-    const fnInfo = parseFunctionString(newValue)
-    if (!fnInfo) throw Error('函数解析失败，请检查格式。示例：function fnName() { }')
-
-    return newFn(...fnInfo.params, fnInfo.body).bind({
-      ...ctx,
-      getComponent
-    })
-  } catch (error) {
-    Notify({
-      type: 'warning',
-      title: '函数声明解析报错',
-      message: error?.message || '函数声明解析报错，请检查语法'
-    })
-
-    return newFn()
-  }
+  // web-erp: 解析顺序 —— registerMaterials 注册物料 > 内置 Mapper > configure.tinyVue native 兜底 > 自定义元素 > 原生 HTML 标签
+  return materials[name] || Mapper[name] || getNative(name) || customElements[name] || (isHTMLTag(name) ? name : null)
 }
 
 const parseJSFunction = (data, scope, ctx) => {
@@ -321,7 +315,9 @@ const parseJSFunction = (data, scope, ctx) => {
     const innerFn = newFn(`return ${data.value}`).bind(ctx)()
     return generateFn(innerFn, ctx)
   } catch (error) {
-    return parseJSXFunction(data, ctx)
+    // web-erp: 删除 JSX 函数降级（parseJSXFunction/babel）—— 含 JSX 的函数声明直接报「不支持 JSX」并返回 undefined（方言 v1 拒绝）
+    reportParseError(error, data?.value, scope)
+    return undefined
   }
 }
 

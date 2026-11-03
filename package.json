@@ -1,6 +1,6 @@
 {
   "name": "@opentiny/tiny-schema-renderer",
-  "version": "1.0.0-beta.6",
+  "version": "1.0.0-beta.6-web-erp.1",
   "packageManager": "pnpm@9.14.2",
   "publishConfig": {
     "access": "public"
@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "test": "vitest run",
     "pub": "pnpm publish --no-git-checks --access=public"
   },
   "main": "dist/index.js",
@@ -34,17 +35,18 @@
   "homepage": "https://opentiny.design/tiny-engine",
   "type": "module",
   "dependencies": {
-    "@babel/core": "7.18.13",
     "@opentiny/tiny-engine-builtin-component": "^2.6.0",
-    "@vue/babel-plugin-jsx": "^1.2.5",
     "@vue/shared": "^3.3.4"
   },
   "devDependencies": {
+    "@opentiny/vue": "^3.21.0",
+    "@opentiny/vue-icon": "^3.21.0",
     "@vitejs/plugin-vue": "^5.1.2",
     "@vitejs/plugin-vue-jsx": "^4.0.1",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^25.0.1",
     "vite": "^5.4.2",
-    "vue": "^3.5.0",
-    "@opentiny/vue": "^3.21.0",
-    "@opentiny/vue-icon": "^3.21.0"
+    "vitest": "^2.1.9",
+    "vue": "^3.5.0"
   }
 }

@@ -13,15 +13,14 @@
 import { defineConfig } from "vite";
 import path from "path";
 import vue from "@vitejs/plugin-vue";
-import vueJsx from "@vitejs/plugin-vue-jsx";
 
 // https://vitejs.dev/config/
 export default defineConfig({
   base: "./",
   define: {
     'process.env': {}
-  },  
-  plugins: [vue(), vueJsx()],
+  },
+  plugins: [vue()],
   publicDir: false,
   build: {
     cssCodeSplit: true,

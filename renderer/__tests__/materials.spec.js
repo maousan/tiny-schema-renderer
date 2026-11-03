@@ -45,4 +45,15 @@ describe('registerMaterials priority', () => {
 
     expect(getComponent('div')).toBe(CanvasBox)
   })
+
+  it('canvas layout containers are no longer builtin-mapped; host registers them to use', () => {
+    // web-erp: CanvasRow/CanvasCol/CanvasRowColContainer/CanvasFlexBox/CanvasSection 已退出 Mapper，
+    // 未注册且无兜底时走普通未注册分支（返回 null），注册后按最高优先级解析
+    setConfigure({ tinyVue: undefined })
+
+    expect(getComponent('CanvasFlexBox')).toBeNull()
+
+    registerMaterials({ CanvasFlexBox: FakeA })
+    expect(getComponent('CanvasFlexBox')).toBe(FakeA)
+  })
 })

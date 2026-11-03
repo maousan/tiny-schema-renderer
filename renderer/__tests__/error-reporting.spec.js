@@ -70,6 +70,41 @@ describe('no silent failure', () => {
     expect(context.jsx).toBe(false)
     expect(context.message.length).toBeGreaterThan(0)
   })
+
+  it('comparison-chain TypeError is not misdiagnosed as JSX (error-type gate)', () => {
+    // web-erp: 「标识符< 标识符」比较链形似 JSX，但运行期错误必为 TypeError 而非 SyntaxError，
+    // 上报不得出现「不支持 JSX」文案，必须携带真实 TypeError 信息
+    const onError = vi.fn()
+    setConfigure({ onError })
+
+    const res = parseData(
+      { type: 'JSExpression', value: 'this.state.min < this.state.cfg.max && this.state.cur > 0' },
+      {},
+      { state: {} }
+    )
+
+    expect(res).toBeUndefined()
+    expect(onError).toHaveBeenCalledTimes(1)
+    const [error, context] = onError.mock.calls[0]
+    expect(error).toBeInstanceOf(TypeError)
+    expect(context.jsx).toBe(false)
+    expect(context.message).not.toContain('JSX')
+    expect(context.message).toBe(error.message)
+  })
+
+  it('throwing onError hook is caught and logged, evaluation still returns undefined', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    setConfigure({
+      onError: () => {
+        throw new Error('hook-kaboom')
+      }
+    })
+
+    const res = parseData({ type: 'JSExpression', value: 'notDefinedVariable' }, {}, {})
+
+    expect(res).toBeUndefined()
+    expect(errSpy).toHaveBeenCalledTimes(1)
+  })
 })
 
 // web-erp: generateFn 原 Notify 改 configure.onWarn；表格空行兜底保留
@@ -117,5 +152,21 @@ describe('generateFn uses onWarn and keeps table fallback', () => {
     generateFn(boom, {})()
 
     expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('throwing onWarn hook is caught and logged, wrapped call still returns null', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    setConfigure({
+      onWarn: () => {
+        throw new Error('hook-kaboom')
+      }
+    })
+
+    const boom = function boomFn() {
+      throw new Error('kaboom')
+    }
+
+    expect(generateFn(boom, {})()).toBeNull()
+    expect(errSpy).toHaveBeenCalledTimes(1)
   })
 })

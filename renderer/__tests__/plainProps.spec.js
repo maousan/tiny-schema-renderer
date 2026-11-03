@@ -1,35 +1,38 @@
 import { describe, it, expect } from 'vitest'
-import { getPlainProps } from '../render'
+import { parseData } from '../render'
 
-// web-erp: 钉住 on[A-Z] 事件 props 不被 hyphenate 的契约（与宿主物料事件约定的咬合面）
-describe('getPlainProps on[A-Z] contract', () => {
-  it('event props (on[A-Z]) keep their original key, never hyphenated', () => {
+// web-erp: 原 getPlainProps 为无调用死代码已删除；本文件重定向为钉真实 props 路径 parseObjectData 的
+// 键名契约 —— 键名一律原样透传（含 on[A-Z] 事件键不做 hyphenate），与宿主物料事件约定的咬合面
+describe('parseObjectData props key contract', () => {
+  it('on[A-Z] event keys are preserved verbatim, never hyphenated', () => {
+    const props = parseData({ onClick: 'submit', 'onUpdate:modelValue': 'visible' }, {}, {})
+
+    expect(props.onClick).toBe('submit')
+    expect(props['onUpdate:modelValue']).toBe('visible')
+    expect(props['on-click']).toBeUndefined()
+    expect(props['on-update:modelValue']).toBeUndefined()
+  })
+
+  it('non-event camelCase keys are preserved verbatim, object/array values pass through', () => {
+    const props = parseData({ myProp: 'x', someObj: { a: 1 }, list: [1, 2] }, {}, {})
+
+    expect(props.myProp).toBe('x')
+    expect(props['my-prop']).toBeUndefined()
+    expect(props.someObj).toEqual({ a: 1 })
+    expect(props.list).toEqual([1, 2])
+  })
+
+  it('function event handlers stay in place under their original key', () => {
     const handler = () => {}
-    const props = getPlainProps({ onClick: handler, 'onUpdate:modelValue': handler })
+    const props = parseData({ onClick: handler }, {}, {})
 
-    // 非 primitive 值走现有 .prop 形态传递，但 key 不做 kebab 转换
-    expect(props['.onClick']).toBe(handler)
-    expect(props['.onUpdate:modelValue']).toBe(handler)
-    expect(props['on-click']).toBeUndefined()
-  })
-
-  it('primitive event props keep their original key', () => {
-    const props = getPlainProps({ onClick: 'handleClick' })
-
-    expect(props.onClick).toBe('handleClick')
-    expect(props['on-click']).toBeUndefined()
-  })
-
-  it('non-event camelCase keys are hyphenated (existing behavior)', () => {
-    const props = getPlainProps({ myProp: 1, someObj: { a: 1 } })
-
-    expect(props['my-prop']).toBe(1)
-    expect(props['.some-obj']).toEqual({ a: 1 })
-    expect(props.myProp).toBeUndefined()
+    // 函数值经 parseFunction 绑定 ctx 后原位保留，键名不转换
+    expect(typeof props.onClick).toBe('function')
+    expect(Object.keys(props)).toEqual(['onClick'])
   })
 
   it('slot option is flattened to its name (existing behavior)', () => {
-    expect(getPlainProps({ slot: { name: 'header' } })).toEqual({ slot: 'header' })
-    expect(getPlainProps({ slot: 'footer' })).toEqual({ slot: 'footer' })
+    expect(parseData({ slot: { name: 'header' } }, {}, {})).toEqual({ slot: 'header' })
+    expect(parseData({ slot: 'footer' }, {}, {})).toEqual({ slot: 'footer' })
   })
 })

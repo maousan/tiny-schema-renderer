@@ -11,16 +11,12 @@
  */
 
 import { h, provide, inject } from 'vue'
-import { isHTMLTag, hyphenate } from '@vue/shared'
+import { isHTMLTag } from '@vue/shared'
 // web-erp: 移除 @vue/babel-plugin-jsx、@babel/core（浏览器端 JSX 降级本身损坏且拖重依赖）与 @opentiny/vue 静态导入
 // web-erp: TinyVue 改经 configure.tinyVue 注入、Notify 改 configure.onWarn/onError 钩子，避免把 TinyVue 全家桶拖进宿主应用
-import {
-  CanvasRow,
-  CanvasCol,
-  CanvasRowColContainer,
-  CanvasFlexBox,
-  CanvasSection
-} from '@opentiny/tiny-engine-builtin-component'
+// web-erp: 画布容器（CanvasRow/CanvasCol/CanvasRowColContainer/CanvasFlexBox/CanvasSection）不再静态内置 ——
+// web-erp: 其上游包 dist 静态导入 @opentiny/vue 全量桶（不可 tree-shake），内置映射会让 TinyVue 必进宿主模块图；
+// web-erp: web-erp 方言 v1 不使用 Row/Col 布局容器，宿主需要时经 registerMaterials 自行注册（见 demo src/main.js）
 import {
   CanvasBox,
   CanvasIcon,
@@ -32,7 +28,6 @@ import {
   CanvasRouterView
 } from './builtin'
 
-const hyphenateRE = /\B([A-Z])/g
 const customElements = {}
 const [JS_EXPRESSION, JS_FUNCTION] = ['JSExpression', 'JSFunction']
 const isOn = (key) => /^on[A-Z]\w*/.test(key)
@@ -48,11 +43,6 @@ const Mapper = {
   slot: CanvasSlot,
   Template: CanvasBox,
   Img: CanvasImg,
-  CanvasRow,
-  CanvasCol,
-  CanvasRowColContainer,
-  CanvasFlexBox,
-  CanvasSection,
   CanvasPlaceholder,
   CanvasRouterLink,
   CanvasRouterView
@@ -100,7 +90,9 @@ const looksLikeJSX = (value) =>
 
 // web-erp: 解析失败统一上报出口 —— onError 未配置时 console.error 兜底（无静默失败），调用方随后返回 undefined
 const reportParseError = (error, expression, scope) => {
-  const jsx = looksLikeJSX(expression)
+  // web-erp: JSX 语法必为 SyntaxError，「标识符< 标识符」比较链等运行期错误必为 TypeError/ReferenceError，
+  // web-erp: 以错误类型加门，避免把比较链（如 this.a.min < this.b.max）误诊成 JSX
+  const jsx = error instanceof SyntaxError && looksLikeJSX(expression)
   const context = {
     expression,
     jsx,
@@ -109,7 +101,12 @@ const reportParseError = (error, expression, scope) => {
   }
 
   if (isFunction(configure.onError)) {
-    configure.onError(error, context)
+    try {
+      configure.onError(error, context)
+    } catch (hookError) {
+      // web-erp: 宿主 onError 钩子自炸时兜底上报，不让钩子异常贯穿渲染
+      console.error('[tiny-schema-renderer] onError 钩子执行失败:', hookError?.message || hookError)
+    }
   } else {
     console.error('[tiny-schema-renderer] 解析失败:', context.message, context)
   }
@@ -118,7 +115,12 @@ const reportParseError = (error, expression, scope) => {
 // web-erp: 方法运行期警告统一出口（原 Notify 改造），onWarn 未配置时 console.warn 兜底
 const reportWarn = (title, message) => {
   if (isFunction(configure.onWarn)) {
-    configure.onWarn(new Error(message), { title, message })
+    try {
+      configure.onWarn(new Error(message), { title, message })
+    } catch (hookError) {
+      // web-erp: 宿主 onWarn 钩子自炸时兜底上报，不让钩子异常贯穿渲染
+      console.error('[tiny-schema-renderer] onWarn 钩子执行失败:', hookError?.message || hookError)
+    }
   } else {
     console.warn(`[tiny-schema-renderer] ${title}: ${message}`)
   }
@@ -264,32 +266,8 @@ export const generateFn = (innerFn, context) => {
 // web-erp: 删除 parseFunctionString 与 parseJSXFunction —— 仅服务于已移除的 babel JSX 降级链路，
 // JSFunction 值由 newFn 直接构造，失败统一走 reportParseError 上报（见 parseJSFunction）
 
-// web-erp: 导出以便单测钉住 on[A-Z] 事件 props 不被 hyphenate 的契约（与宿主物料事件约定的咬合面）
-export const getPlainProps = (object = {}) => {
-  const { slot, ...rest } = object
-  const props = {}
-
-  if (slot) {
-    rest.slot = slot.name || slot
-  }
-
-  Object.entries(rest).forEach(([key, value]) => {
-    let renderKey = key
-
-    // html 标签属性会忽略大小写，所以传递包含大写的 props 需要转换为 kebab 形式的 props
-    if (!/on[A-Z]/.test(renderKey) && hyphenateRE.test(renderKey)) {
-      renderKey = hyphenate(renderKey)
-    }
-
-    if (['boolean', 'string', 'number'].includes(typeof value)) {
-      props[renderKey] = value
-    } else {
-      // 如果传给webcomponent标签的是对象或者数组需要使用.prop修饰符，转化成h函数就是如下写法
-      props[`.${renderKey}`] = value
-    }
-  })
-  return props
-}
+// web-erp: 删除 getPlainProps（连同 hyphenate/hyphenateRE）—— fork 与上游均无调用点的死代码，
+// props 键名契约由真实路径 parseObjectData 钉住（键名原样透传不转换，见 __tests__/plainProps.spec.js）
 
 const generateCollection = (schema) => {
   if (schema.componentName === 'Collection' && schema.props?.dataSource && schema.children) {

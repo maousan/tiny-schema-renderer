@@ -115,3 +115,106 @@ describe('deep-level ctx semantics (upstream behavior pin)', () => {
     wrapper.unmount()
   })
 })
+
+// web-erp: configure.globals 宿主全局注入规格 —— setSchema 先展开 globals 再置页面 state，
+// methods 随后并（现有次序）；同名覆盖方向经下述用例实证钉死：
+// 保留键 "state" 恒为页面 state 对象（覆盖 globals.state）；methods 键覆盖同名 globals 键；
+// 页面 state 数据嵌套于 "state" 键之下，与 globals 其它键天然不同层、不构成同键冲突。
+// 断言走 props 层 JSExpression（pageContext 在 renderGroup 一层对 props 可达，
+// children 文本表达式走 renderSlot 链 this 不可达，见上方深层 ctx 语义钉子）
+describe('configure.globals host injection', () => {
+  afterEach(() => {
+    setConfigure({ globals: undefined })
+  })
+
+  const mountWith = async (schema) => {
+    const wrapper = mount(RenderMain, { props: { schema } })
+    await flushPromises()
+    await nextTick()
+    await nextTick()
+    return wrapper
+  }
+
+  it('globals handle reachable: expression reads this.app.name, page method calls this.app.call(...)', async () => {
+    const app = { call: vi.fn(), name: 'lcp-sdk' }
+    setConfigure({ globals: { app } })
+
+    const wrapper = await mountWith({
+      componentName: 'Page',
+      children: [
+        {
+          componentName: 'span',
+          props: { className: 'g-name', 'data-name': { type: 'JSExpression', value: 'this.app.name' } },
+          children: []
+        },
+        {
+          componentName: 'span',
+          props: {
+            className: 'g-call',
+            // 渲染期触发页面方法，方法内 this.app.call 可达宿主通道
+            'data-call': { type: 'JSExpression', value: 'this.fetchData() || "called"' }
+          },
+          children: []
+        }
+      ],
+      state: {},
+      // 方法值走渲染器正路 JSFunction 形态（同 evaluator.spec 契约；裸字符串经 isString 分支不转函数）
+      methods: {
+        fetchData: {
+          type: 'JSFunction',
+          value: 'function fetchData() { return this.app.call("order", "list", { page: 1 }) }'
+        }
+      },
+      css: ''
+    })
+
+    expect(app.call).toHaveBeenCalledTimes(1)
+    expect(app.call).toHaveBeenCalledWith('order', 'list', { page: 1 })
+    expect(wrapper.find('.g-name').attributes('data-name')).toBe('lcp-sdk')
+    expect(wrapper.find('.g-call').attributes('data-call')).toBe('called')
+    wrapper.unmount()
+  })
+
+  it('same-name key on reserved "state": page state object overrides globals.state', async () => {
+    setConfigure({ globals: { state: 'fake-global-state' } })
+
+    const wrapper = await mountWith({
+      componentName: 'Page',
+      children: [
+        {
+          componentName: 'span',
+          props: { className: 'g-state', 'data-size': { type: 'JSExpression', value: 'this.state.size' } },
+          children: []
+        }
+      ],
+      state: { size: 'large' },
+      methods: {},
+      css: ''
+    })
+
+    // 若被 globals.state 抢占，this.state.size 求值为 undefined
+    expect(wrapper.find('.g-state').attributes('data-size')).toBe('large')
+    wrapper.unmount()
+  })
+
+  it('same-name key on method: methods override globals handle', async () => {
+    setConfigure({ globals: { shared: 'from-globals' } })
+
+    const wrapper = await mountWith({
+      componentName: 'Page',
+      children: [
+        {
+          componentName: 'span',
+          props: { className: 'g-shared', 'data-shared': { type: 'JSExpression', value: 'this.shared()' } },
+          children: []
+        }
+      ],
+      state: {},
+      methods: { shared: { type: 'JSFunction', value: 'function shared() { return "from-methods" }' } },
+      css: ''
+    })
+
+    expect(wrapper.find('.g-shared').attributes('data-shared')).toBe('from-methods')
+    wrapper.unmount()
+  })
+})

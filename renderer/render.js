@@ -70,10 +70,16 @@ export const registerMaterials = (materialsMap) => {
  *   未配置时 console.error 兜底，保证无静默失败
  * - onWarn?: (error, context) => void 方法运行期报错回调（generateFn 同步抛错与 promise reject）；
  *   未配置时 console.warn 兜底
+ * - globals?: Record<string, unknown> 宿主注入的全局句柄（如 LCP SDK 实例 app），随 setSchema 种入页面上下文：
+ *   种入次序为先展开 globals 再置页面 state（`{...globals, state}`），methods 随后并（现有次序）。
+ *   同名覆盖方向（实证钉死，见 __tests__/renderMain.spec.js）：保留键 "state" 恒为页面 state 对象
+ *   （覆盖 globals.state）；methods 键覆盖同名 globals 键；页面 state 数据嵌套于 "state" 键之下，
+ *   与 globals 其它键天然不同层、不构成同键冲突
  * 注意：configure 同时承载上游画布容器配置（configure[componentName].isContainer 等），
- * 宿主注入字段请勿与 componentName 命名冲突
+ * 宿主注入字段请勿与 componentName 命名冲突；configure 导出仅供包内 RenderMain 读取，
+ * 宿主一律经 setConfigure 注入
  */
-const configure = {}
+export const configure = {}
 
 export const setConfigure = (configureData) => {
   Object.assign(configure, configureData)

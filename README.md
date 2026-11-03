@@ -4,6 +4,10 @@
 
 > web-erp 收编说明（ADR-0038）：本 fork 以**源码收编（vendored）方式**被宿主消费——宿主仓自建引入本仓源码，不经 npm 包安装使用。`main`/`module` 指向 `dist/index.js` 且 `dist` 不入库、亦无发布前构建钩子（不配 `prepare`），因此**直接以 git 依赖安装不可用**。
 
+---
+
+> 以下为上游原文（npm 安装 / 内置 TinyVue 等说明），本 fork 不适用——见上方 fork 说明。
+
 ## 前置条件
 
 运行时渲染器底层基于 `vue@3.x.x` 并且内置了 `TinyVue` 组件库，所以要在工程中安装 `@opentiny/vue`、`@opentiny/vue-theme`、`@opentiny/vue-icon`、`vue` 依赖。

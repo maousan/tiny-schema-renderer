@@ -12,7 +12,7 @@
 
 import { h, provide, nextTick, reactive, shallowReactive, watchEffect } from "vue";
 import Loading from "./Loading.vue";
-import renderer, { parseData } from "./render";
+import renderer, { parseData, configure } from "./render";
 import useContext from "./useContext";
 
 export default {
@@ -82,7 +82,11 @@ export default {
       }
       const newSchema = JSON.parse(JSON.stringify(data));
 
+      // web-erp: 宿主全局句柄（configure.globals）先于页面 state 种入 —— 页面 schema 的 methods/表达式
+      // 经 this.<handle>（如 this.app.call(module, action, params)）可达宿主通道；methods 随后并（现有次序）。
+      // 同名覆盖方向 methods > 保留键 "state" > globals，实证钉死见 __tests__/renderMain.spec.js
       const context = {
+        ...(configure.globals || {}),
         state,
       };
       // 此处提升很重要，因为setState、initProps也会触发画布重新渲染，所以需要提升上下文环境的设置时间
